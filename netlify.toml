@@ -1,0 +1,32 @@
+[build]
+  publish = "dist"
+  command = "npm run build"
+
+[[redirects]]
+  from = "/predict"
+  to = "https://mango-multiclass-disease-detection.onrender.com/predict"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/health"
+  to = "https://mango-multiclass-disease-detection.onrender.com/health"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/classes"
+  to = "https://mango-multiclass-disease-detection.onrender.com/classes"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/api/*"
+  to = "https://mango-multiclass-disease-detection.onrender.com/:splat"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200

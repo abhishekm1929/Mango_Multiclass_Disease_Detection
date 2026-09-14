@@ -1,0 +1,5 @@
+/predict  https://mango-multiclass-disease-detection.onrender.com/predict  200!
+/health  https://mango-multiclass-disease-detection.onrender.com/health  200!
+/classes  https://mango-multiclass-disease-detection.onrender.com/classes  200!
+/api/*  https://mango-multiclass-disease-detection.onrender.com/:splat  200!
+/*  /index.html  200

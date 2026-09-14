@@ -5,6 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:backend": "backend\\.venv\\Scripts\\python.exe -m uvicorn main:app --app-dir backend --reload --port 8000",
+    "backend": "npm run dev:backend",
     "build": "vite build",
     "lint": "oxlint",
     "preview": "vite preview"

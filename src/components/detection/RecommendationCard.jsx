@@ -1,5 +1,5 @@
 import React from 'react';
-import { ShieldAlert, CheckCircle, ArrowRight, Stethoscope, AlertCircle } from 'lucide-react';
+import { ShieldAlert, Stethoscope, AlertCircle } from 'lucide-react';
 
 export const RecommendationCard = ({ disease }) => {
   if (!disease) return null;

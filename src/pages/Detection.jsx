@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Sparkles, Activity, ShieldCheck, Info } from 'lucide-react';
+import { Activity } from 'lucide-react';
 import { UploadBox } from '../components/detection/UploadBox';
 import { ImagePreview } from '../components/detection/ImagePreview';
 import { AnalysisLoader } from '../components/detection/AnalysisLoader';
@@ -7,7 +7,7 @@ import { ResultDashboard } from '../components/detection/ResultDashboard';
 import { Toast } from '../components/common/Toast';
 import { predictMangoLeafDisease } from '../services/predictionService';
 
-export const Detection = ({ initialSampleId, onClearInitialSample }) => {
+export const Detection = ({ _initialSampleId, onClearInitialSample }) => {
   // Stages: 'idle' | 'selected' | 'analyzing' | 'result'
   const [stage, setStage] = useState('idle');
   const [selectedImage, setSelectedImage] = useState(null);

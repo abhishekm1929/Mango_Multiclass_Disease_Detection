@@ -129,7 +129,17 @@ class EfficientNetMangoClassifier:
 
         if weights_path is None:
             base_dir = os.path.dirname(os.path.abspath(__file__))
-            self.weights_path = os.path.join(base_dir, "models", "mango_cnn_efficientnet.pth")
+            candidates = [
+                os.path.join(base_dir, "models", "mango_cnn_efficientnet.pth"),
+                os.path.join(base_dir, "backend", "models", "mango_cnn_efficientnet.pth"),
+                os.path.join(os.getcwd(), "backend", "models", "mango_cnn_efficientnet.pth"),
+                os.path.join(os.getcwd(), "models", "mango_cnn_efficientnet.pth"),
+            ]
+            self.weights_path = candidates[0]
+            for c in candidates:
+                if os.path.exists(c):
+                    self.weights_path = c
+                    break
         else:
             self.weights_path = weights_path
 
@@ -171,8 +181,11 @@ class EfficientNetMangoClassifier:
                 else:
                     self.model.load_state_dict(checkpoint)
                 self.is_weights_loaded = True
+                self.model_name = "EfficientNet-B0-Trained"
                 print(f"[CNN Classifier] Loaded newly trained weights from: {self.weights_path}")
             else:
+                self.is_weights_loaded = False
+                self.model_name = "EfficientNet-B0-Base"
                 print(f"[CNN Classifier] Note: No custom weights found at '{self.weights_path}'.")
                 print("[CNN Classifier] Initializing with pretrained EfficientNet-B0 backbone. Run training to generate fine-tuned weights.")
                 try:

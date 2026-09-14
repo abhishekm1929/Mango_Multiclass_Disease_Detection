@@ -32,6 +32,9 @@ def health_check():
         "status": "online",
         "engine": "MangoLeafInferenceEngine",
         "model_version": engine.model_version,
+        "weights_loaded": engine.classifier.is_weights_loaded,
+        "weights_path": os.path.basename(engine.classifier.weights_path),
+        "device": str(engine.classifier.device),
         "classes_count": len(DISEASE_CLASSES)
     }
 

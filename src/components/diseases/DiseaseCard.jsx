@@ -3,23 +3,21 @@ import { Badge, RiskBadge } from '../common/Badge';
 import { ChevronDown, ChevronUp, Sparkles, Stethoscope, ArrowRight, ShieldCheck, Bug, Droplets, AlertTriangle } from 'lucide-react';
 import { Button } from '../common/Button';
 
+const renderCategoryIcon = (categoryType) => {
+  switch (categoryType?.toLowerCase()) {
+    case 'healthy':
+      return <ShieldCheck className="w-6 h-6" />;
+    case 'bacterial':
+      return <Droplets className="w-6 h-6" />;
+    case 'fungal':
+      return <Bug className="w-6 h-6" />;
+    default:
+      return <AlertTriangle className="w-6 h-6" />;
+  }
+};
+
 export const DiseaseCard = ({ disease, onTestSample }) => {
   const [expanded, setExpanded] = useState(false);
-
-  const getCategoryIcon = (categoryType) => {
-    switch (categoryType?.toLowerCase()) {
-      case 'healthy':
-        return ShieldCheck;
-      case 'bacterial':
-        return Droplets;
-      case 'fungal':
-        return Bug;
-      default:
-        return AlertTriangle;
-    }
-  };
-
-  const Icon = getCategoryIcon(disease.categoryType);
 
   return (
     <div className="rounded-3xl glass-panel p-6 sm:p-8 border border-slate-800 hover:border-slate-700 transition-all duration-300 shadow-xl flex flex-col justify-between">
@@ -35,7 +33,7 @@ export const DiseaseCard = ({ disease, onTestSample }) => {
         {/* Title Header */}
         <div className="flex items-start gap-3.5">
           <div className="w-12 h-12 rounded-2xl bg-slate-900 border border-slate-800 flex items-center justify-center text-emerald-400 flex-shrink-0">
-            <Icon className="w-6 h-6" />
+            {renderCategoryIcon(disease.categoryType)}
           </div>
           <div>
             <h3 className="text-xl font-bold text-white tracking-tight">

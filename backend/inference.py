@@ -2,7 +2,7 @@ import io
 import time
 import os
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageOps
 
 try:
     from detector import YOLOv8Detector
@@ -61,9 +61,10 @@ class MangoLeafInferenceEngine:
         self.model_version = f"{self.detector.model_version} + {self.classifier.model_name}"
 
     def preprocess_image(self, file_bytes):
-        """Decode and validate image bytes into RGB numpy array."""
+        """Decode and validate image bytes into RGB numpy array with EXIF auto-rotation."""
         try:
-            pil_img = Image.open(io.BytesIO(file_bytes)).convert("RGB")
+            raw_img = Image.open(io.BytesIO(file_bytes))
+            pil_img = ImageOps.exif_transpose(raw_img).convert("RGB")
             np_rgb = np.array(pil_img)
             return np_rgb, pil_img.size
         except Exception as e:
@@ -97,7 +98,7 @@ class MangoLeafInferenceEngine:
             key=lambda x: x[1],
             reverse=True
         )
-        if sorted_dist and sorted_dist[0][1] >= 8.0:
+        if sorted_dist and sorted_dist[0][1] >= 15.0:
             top2_name = sorted_dist[0][0]
             top2_id = NAME_TO_META.get(top2_name, {}).get("id")
             top2_idx = ID_TO_INDEX.get(top2_id, 0)
@@ -258,10 +259,12 @@ class MangoLeafInferenceEngine:
                     continue
 
                 baseline_prob = whole_leaf_cnn["distribution"].get(d_data["name"], 0.0)
-                # Genuine secondary disease requires high crop confidence (>= 58%)
+                # Genuine secondary disease requires:
+                # 1. Very high confidence independent patch classification (>= 85%), OR
+                # 2. Significant whole-leaf secondary probability (>= 12%) with solid patch confidence (>= 65%)
                 is_genuine_secondary = (
-                    d_data["confidence"] >= 58.0 and
-                    (baseline_prob >= 5.0 or d_data["count"] >= 1)
+                    d_data["confidence"] >= 85.0 or
+                    (baseline_prob >= 12.0 and d_data["confidence"] >= 65.0)
                 )
 
                 if is_genuine_secondary:

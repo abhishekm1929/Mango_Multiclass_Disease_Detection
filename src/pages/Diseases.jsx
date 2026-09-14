@@ -2,8 +2,7 @@ import React, { useState } from 'react';
 import { DISEASE_CLASSES } from '../data/diseases';
 import { DiseaseCard } from '../components/diseases/DiseaseCard';
 import { DiseaseFilter } from '../components/diseases/DiseaseFilter';
-import { BookOpen, Sparkles, AlertCircle } from 'lucide-react';
-import { SAMPLE_LEAF_IMAGES } from '../data/sampleImages';
+import { BookOpen, AlertCircle } from 'lucide-react';
 
 export const Diseases = ({ onSelectDiseaseToTest }) => {
   const [searchQuery, setSearchQuery] = useState('');

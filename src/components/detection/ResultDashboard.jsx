@@ -2,17 +2,11 @@ import React, { useState } from 'react';
 import {
   Sparkles,
   RefreshCw,
-  CheckCircle2,
   AlertTriangle,
-  ShieldCheck,
-  Layers,
   ArrowLeft,
   Eye,
   EyeOff,
-  Crosshair,
-  Bug,
-  Droplets,
-  Zap
+  Crosshair
 } from 'lucide-react';
 import { Button } from '../common/Button';
 import { Badge, RiskBadge } from '../common/Badge';
