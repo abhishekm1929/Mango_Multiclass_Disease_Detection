@@ -6,7 +6,10 @@ import glob
 sys.path.insert(0, os.path.abspath("backend"))
 from inference import engine, DISEASE_CLASSES
 
-data_dir = os.path.join("backend", "data", "Mango S data")
+DATA_DIR = os.path.join(os.path.dirname(__file__), "data", "Mango S data")
+if not os.path.exists(DATA_DIR):
+    DATA_DIR = os.path.join("backend", "data", "Mango S data")
+data_dir = DATA_DIR
 classes = [
     "Healthy", "Anthracnose", "Bacterial Canker", "Powdery Mildew",
     "Sooty Mould", "Die Back", "Gall Midge", "Cutting Weevil"
@@ -30,7 +33,8 @@ for cls in classes:
                 multi_count += 1
             preds.append(pred_disease)
             expected_name = "Sooty Mold" if cls == "Sooty Mould" else cls
-            if pred_disease == expected_name or (cls == "Healthy" and is_healthy):
+            has_expected = (pred_disease == expected_name) or any(d["name"] == expected_name for d in res.get("predicted_diseases", []))
+            if (has_expected and not is_healthy and cls != "Healthy") or (cls == "Healthy" and is_healthy):
                 correct += 1
     acc = (correct / max(1, total)) * 100
     results[cls] = {

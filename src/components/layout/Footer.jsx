@@ -1,5 +1,5 @@
 import React from 'react';
-import { Leaf, ShieldCheck, Cpu, Code2, Heart } from 'lucide-react';
+import { Leaf, ShieldCheck, Cpu } from 'lucide-react';
 
 export const Footer = ({ onNavigate }) => {
   return (

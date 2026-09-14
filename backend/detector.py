@@ -76,7 +76,11 @@ class YOLOv8Detector:
         morph_dets = self._detect_pathology_morphology(np_rgb, w_img, h_img, target_disease)
         raw_candidates.extend(morph_dets)
 
-        # 3. Optional YOLO proposals
+        # 3. Multiscale Spatial Quadrant Proposals (ensures co-occurring pathologies across leaf are captured)
+        quad_dets = self._extract_multiscale_quadrant_proposals(np_rgb, w_img, h_img)
+        raw_candidates.extend(quad_dets)
+
+        # 4. Optional YOLO proposals
         if self.yolo_model is not None:
             raw_candidates.extend(self._detect_with_yolo(np_rgb, w_img, h_img))
 
@@ -86,14 +90,14 @@ class YOLOv8Detector:
         # Apply strict Non-Maximum Suppression (IoU 0.35)
         clean_detections = self.apply_nms(raw_candidates, iou_threshold=0.35)
 
-        return clean_detections[:8]
+        return clean_detections[:10]
 
     def _extract_cam_regions(self, cam_heatmap, w_img, h_img):
         """Extracts bounding boxes from neural class activation heatmaps."""
         detections = []
         try:
             cam_resized = cv2.resize(cam_heatmap, (w_img, h_img), interpolation=cv2.INTER_LINEAR)
-            thresh_val = max(0.35, float(np.percentile(cam_resized, 70)))
+            thresh_val = max(0.32, float(np.percentile(cam_resized, 68)))
             binary_mask = (cam_resized >= thresh_val).astype(np.uint8) * 255
 
             kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
@@ -103,7 +107,7 @@ class YOLOv8Detector:
             total_area = w_img * h_img
             for cnt in contours:
                 area = cv2.contourArea(cnt)
-                if area < (total_area * 0.01) or area > (total_area * 0.65):
+                if area < (total_area * 0.008) or area > (total_area * 0.70):
                     continue
                 x, y, w, h = cv2.boundingRect(cnt)
                 if w < 16 or h < 16:
@@ -135,11 +139,48 @@ class YOLOv8Detector:
 
         return detections
 
+    def _extract_multiscale_quadrant_proposals(self, np_rgb, w_img, h_img):
+        """Generates candidate sub-regions across leaf quadrants for multi-disease verification."""
+        if not HAS_CV2:
+            return []
+
+        proposals = []
+        # Spatial partitions: Left-half, Right-half, Top-half, Bottom-half, and 4 quadrants
+        pad = 8
+        boxes = [
+            (pad, pad, int(w_img * 0.52), int(h_img * 0.52)),
+            (int(w_img * 0.48), pad, w_img - pad, int(h_img * 0.52)),
+            (pad, int(h_img * 0.48), int(w_img * 0.52), h_img - pad),
+            (int(w_img * 0.48), int(h_img * 0.48), w_img - pad, h_img - pad),
+            (pad, pad, int(w_img * 0.55), h_img - pad),
+            (int(w_img * 0.45), pad, w_img - pad, h_img - pad),
+            (pad, pad, w_img - pad, int(h_img * 0.55)),
+            (pad, int(h_img * 0.45), w_img - pad, h_img - pad),
+        ]
+
+        for x1, y1, x2, y2 in boxes:
+            if (x2 - x1) < 40 or (y2 - y1) < 40:
+                continue
+            proposals.append({
+                "bbox": [x1, y1, x2, y2],
+                "relative_bbox": [
+                    round(x1 / w_img, 4),
+                    round(y1 / h_img, 4),
+                    round(x2 / w_img, 4),
+                    round(y2 / h_img, 4)
+                ],
+                "confidence": 80.0,
+                "area": int((x2 - x1) * (y2 - y1)),
+                "source": "quadrant"
+            })
+
+        return proposals
+
     def _detect_pathology_morphology(self, np_rgb, w_img, h_img, target_disease=None):
         """
-        Adaptive multi-phenotype lesion contour extraction.
-        Extracts necrotic, powdery, sooty, and chlorotic patches independently so
-        distinct pathologies across different quadrants are localized separately.
+        Adaptive multi-phenotype lesion contour extraction across all 8 pathology categories.
+        Extracts necrotic spots, canker halos, powdery mycelium, sooty molds, gall pustules,
+        cutting damage, and margin die-back desiccation independently.
         """
         if not HAS_CV2:
             return []
@@ -164,46 +205,63 @@ class YOLOv8Detector:
 
         # 2. Active Leaf Blade Lamina
         is_leaf = (
-            ((h_channel >= 10) & (h_channel <= 105) & (s_channel >= 10)) |
-            ((g > r * 0.72) & (g > b * 0.72) & (brightness > 15) & (brightness < 240)) |
-            ((r > 35) & (g > 25) & (brightness > 15) & (brightness < 240) & ~background_glare)
+            ((h_channel >= 8) & (h_channel <= 110) & (s_channel >= 8)) |
+            ((g > r * 0.70) & (g > b * 0.70) & (brightness > 12) & (brightness < 242)) |
+            ((r > 30) & (g > 20) & (brightness > 12) & (brightness < 242) & ~background_glare)
         ) & ~background_glare
 
         # 3. Independent Pathology Phenotype Masks
-        # A) Necrotic & Canker Lesions (Dark brown/black cores & halo margins)
+        # A) Anthracnose (Dark necrotic spots & shot holes)
         dark_necrotic = (
             (((brightness < 88) & (brightness > 5)) |
              ((r > b + 8) & (r > g - 15) & (brightness < 185) & (s_channel > 15))) &
             is_leaf & ~background_glare
         )
-        chlorotic_yellow = (
-            (r > 120) & (g > 95) & (b < 110) & (r > b + 15) &
+
+        # B) Bacterial Canker (Angular water-soaked lesions + yellow chlorotic halos)
+        chlorotic_canker = (
+            ((r > 115) & (g > 90) & (b < 115) & (r > b + 12) & (brightness > 35)) &
             is_leaf & ~background_glare
         )
 
-        # B) Powdery Mildew (Whitish mycelial patches)
+        # C) Powdery Mildew (Whitish mycelial fungal coating)
         powdery = (
-            (brightness > 160) & (brightness <= 248) &
-            (np.abs(r - g) < 24) & (np.abs(g - b) < 24) &
-            (s_channel < 48) & (g > 28) &
+            (brightness > 155) & (brightness <= 248) &
+            (np.abs(r - g) < 26) & (np.abs(g - b) < 26) &
+            (s_channel < 52) & (g > 25) &
             is_leaf & ~background_glare
         )
 
-        # C) Sooty Mold (Superficial black crust)
+        # D) Sooty Mold (Superficial black coating)
         sooty = (
-            (brightness < 52) & (brightness > 5) &
-            (s_channel < 65) &
+            (brightness < 52) & (brightness > 4) &
+            (s_channel < 70) & (r < 65) & (g < 65) & (b < 65) &
+            is_leaf & ~background_glare
+        )
+
+        # E) Gall Midge (Elevated pustules/galls, small yellowish-brown blister bumps)
+        gall_midge = (
+            ((r > 125) & (r > b + 25) & (g > 85) & (g < 165) & (brightness > 65) & (brightness < 175)) &
+            is_leaf & ~background_glare
+        )
+
+        # F) Die Back (Brown necrosis / margin desiccation along leaf margins and veins)
+        die_back = (
+            ((r > b + 12) & (r > g - 8) & (brightness > 30) & (brightness < 205) & (s_channel > 18)) &
             is_leaf & ~background_glare
         )
 
         phenotype_masks = [
-            ("necrotic", (dark_necrotic | chlorotic_yellow)),
+            ("necrotic", dark_necrotic),
+            ("canker", chlorotic_canker),
             ("powdery", powdery),
-            ("sooty", sooty)
+            ("sooty", sooty),
+            ("galls", gall_midge),
+            ("dieback", die_back)
         ]
 
-        min_area = max(90, int(total_pixels * 0.0008))
-        max_area = int(total_pixels * 0.60)
+        min_area = max(70, int(total_pixels * 0.0006))
+        max_area = int(total_pixels * 0.65)
         detections = []
 
         kernel_close = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))

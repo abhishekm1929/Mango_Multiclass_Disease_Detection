@@ -1,5 +1,5 @@
 import React from 'react';
-import { UploadCloud, Cpu, CheckCircle2, ArrowRight } from 'lucide-react';
+import { UploadCloud, Cpu, CheckCircle2 } from 'lucide-react';
 
 export const HowItWorks = () => {
   const steps = [

@@ -1,5 +1,5 @@
 import React from 'react';
-import { Search, Filter, X } from 'lucide-react';
+import { Search, X } from 'lucide-react';
 import { CATEGORIES } from '../../data/diseases';
 
 export const DiseaseFilter = ({

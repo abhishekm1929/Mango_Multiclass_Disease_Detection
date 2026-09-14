@@ -10,8 +10,6 @@ import { getDiseaseById, getDiseaseByName, DISEASE_CLASSES } from '../data/disea
 
 // Determine default API candidates
 const CONFIGURED_API_URL = import.meta.env.VITE_API_URL;
-const CLOUD_API_URL = 'https://mango-multiclass-disease-detection.onrender.com';
-const LOCAL_API_URL = 'http://127.0.0.1:8000';
 
 /**
  * Convert dataURL (SVG or Base64 image) to a real rasterized PNG/JPEG File object
@@ -49,7 +47,7 @@ async function dataUrlToFile(dataUrl, filename = 'specimen.png') {
  */
 export async function predictMangoLeafDisease(imageSource, onProgressStep) {
   if (onProgressStep) onProgressStep(0); // 1. Image loaded
-  await delay(120);
+  await delay(80);
 
   // Prepare File object & preview URL
   let fileToUpload = null;
@@ -65,88 +63,77 @@ export async function predictMangoLeafDisease(imageSource, onProgressStep) {
   } else if (imageSource?.isSample && imageSource?.diseaseId) {
     sampleDiseaseId = imageSource.diseaseId;
     previewUrl = imageSource.dataUrl || imageSource.previewUrl;
-    fileToUpload = await dataUrlToFile(previewUrl, imageSource.fileName || `${sampleDiseaseId}.png`);
+    try {
+      fileToUpload = await dataUrlToFile(previewUrl, imageSource.fileName || `${sampleDiseaseId}.png`);
+    } catch {
+      fileToUpload = null;
+    }
   } else if (imageSource?.dataUrl || imageSource?.previewUrl) {
     sampleDiseaseId = imageSource.diseaseId || null;
     previewUrl = imageSource.dataUrl || imageSource.previewUrl;
-    fileToUpload = await dataUrlToFile(previewUrl, imageSource.fileName || 'specimen.png');
+    try {
+      fileToUpload = await dataUrlToFile(previewUrl, imageSource.fileName || 'specimen.png');
+    } catch {
+      fileToUpload = null;
+    }
   }
 
-  if (!fileToUpload && !previewUrl) {
+  if (!previewUrl && !fileToUpload) {
     throw new Error('No valid image file found for analysis.');
   }
 
   if (onProgressStep) onProgressStep(1); // 2. Image preprocessed & normalized
-  await delay(150);
+  await delay(100);
 
   let data = null;
 
-  const isHttps = typeof window !== 'undefined' && window.location.protocol === 'https:';
-  const isLocalhost = typeof window !== 'undefined' && (
-    window.location.hostname === 'localhost' ||
-    window.location.hostname === '127.0.0.1'
-  );
-
-  // Build ordered list of candidate endpoints with appropriate timeouts
-  const endpointsToTry = [];
-
-  // 1. Same-origin relative path (served by Vite proxy locally & Netlify _redirects in production)
-  endpointsToTry.push({ url: '/predict', timeout: 35000 });
-
-  // 2. Direct Cloud REST API (Render backend)
-  endpointsToTry.push({ url: `${CLOUD_API_URL}/predict`, timeout: 60000 });
-
-  // 3. User configured URL (if any)
-  if (CONFIGURED_API_URL) {
-    const base = CONFIGURED_API_URL.replace(/\/+$/, '');
-    endpointsToTry.push({ url: `${base}/predict`, timeout: 45000 });
-  }
-
-  // 4. Local FastAPI server direct (only on HTTP/localhost to avoid HTTPS Mixed Content block)
-  if (!isHttps || isLocalhost) {
-    endpointsToTry.push({ url: `${LOCAL_API_URL}/predict`, timeout: 15000 });
-  }
-
   if (onProgressStep) onProgressStep(2); // 3. Neural pattern extraction
 
-  let apiSucceeded = false;
-  for (const candidate of endpointsToTry) {
-    try {
-      const formData = new FormData();
-      formData.append('file', fileToUpload);
+  // Fast Backend Probe: Try local backend first with responsive 3.5s timeout
+  if (fileToUpload) {
+    const candidateUrls = ['/predict', 'http://127.0.0.1:8000/predict'];
+    if (CONFIGURED_API_URL) {
+      candidateUrls.unshift(`${CONFIGURED_API_URL.replace(/\/+$/, '')}/predict`);
+    }
 
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), candidate.timeout || 30000);
+    for (const url of candidateUrls) {
+      try {
+        const formData = new FormData();
+        formData.append('file', fileToUpload);
 
-      const response = await fetch(candidate.url, {
-        method: 'POST',
-        body: formData,
-        signal: controller.signal
-      });
-      clearTimeout(timeoutId);
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 3500);
 
-      if (response.ok) {
-        data = await response.json();
-        if (data && data.success !== false) {
-          apiSucceeded = true;
-          console.info(`[PredictionService] Inference succeeded via: ${candidate.url}`);
-          break;
+        const response = await fetch(url, {
+          method: 'POST',
+          body: formData,
+          signal: controller.signal
+        });
+        clearTimeout(timeoutId);
+
+        if (response.ok) {
+          const resJson = await response.json();
+          if (resJson && resJson.success !== false) {
+            data = resJson;
+            console.info(`[PredictionService] Inference succeeded via: ${url}`);
+            break;
+          }
         }
-      } else {
-        console.warn(`[PredictionService] Endpoint ${candidate.url} returned status ${response.status}`);
+      } catch (err) {
+        // Fast failover to client-side engine without blocking user
+        console.warn(`[PredictionService] Backend probe at ${url} unavailable:`, err.message || err);
       }
-    } catch (err) {
-      console.warn(`[PredictionService] Attempt on ${candidate.url} failed:`, err.message || err);
     }
   }
 
-  if (!apiSucceeded || !data) {
-    console.info('[PredictionService] Cloud & local AI backends unreachable -> Executing in-browser Computer Vision Engine...');
+  // If backend server is offline or unreachable, execute instant client-side CV engine
+  if (!data) {
+    console.info('[PredictionService] Executing in-browser Computer Vision Diagnostic Engine...');
     data = await analyzeImageWithClientSideCV(imageSource, previewUrl, sampleDiseaseId);
   }
 
   if (onProgressStep) onProgressStep(3); // 4. Finalizing multi-class predictions
-  await delay(120);
+  await delay(100);
 
   // Augment with rich botanical disease information
   const predictedDiseasesWithInfo = (data.predicted_diseases || []).map((dis) => {
@@ -393,8 +380,8 @@ async function analyzeImageWithClientSideCV(imageSource, previewUrl, sampleDisea
       }
     };
 
-    // 1. Sooty Mold
-    if (totalSooty > 60) {
+    // 1. Sooty Mold (Superficial black coating)
+    if (totalSooty > 45) {
       extractGridClusters(
         (cell) => cell.sooty * 2,
         'sooty-mold',
@@ -402,12 +389,12 @@ async function analyzeImageWithClientSideCV(imageSource, previewUrl, sampleDisea
         'Capnodium mangiferae / Meliola mangiferae',
         'Fungal',
         'Low',
-        6
+        5
       );
     }
 
-    // 2. Powdery Mildew
-    if (totalPowdery > 50) {
+    // 2. Powdery Mildew (White/greyish mycelial fungal coating)
+    if (totalPowdery > 40) {
       extractGridClusters(
         (cell) => cell.powdery * 2,
         'powdery-mildew',
@@ -415,12 +402,12 @@ async function analyzeImageWithClientSideCV(imageSource, previewUrl, sampleDisea
         'Oidium mangiferae',
         'Fungal',
         'Moderate',
-        6
+        5
       );
     }
 
-    // 3. Gall Midge blisters
-    if (totalGalls > 45) {
+    // 3. Gall Midge blisters (Elevated pustules/galls)
+    if (totalGalls > 35) {
       extractGridClusters(
         (cell) => cell.galls * 2,
         'gall-midge',
@@ -428,47 +415,59 @@ async function analyzeImageWithClientSideCV(imageSource, previewUrl, sampleDisea
         'Procontarinia matteiana',
         'Pest / Insect Infestation',
         'Moderate',
+        4
+      );
+    }
+
+    // 4. Bacterial Canker (Angular necrotic spots surrounded by yellow chlorotic halos)
+    if (totalYellowHalos > 25) {
+      extractGridClusters(
+        (cell) => cell.yellowHalos * 2 + cell.darkSpots,
+        'bacterial-canker',
+        'Bacterial Canker',
+        'Xanthomonas citri pv. mangiferaeindicae',
+        'Bacterial',
+        'High',
         5
       );
     }
 
-    // 4. Anthracnose vs Bacterial Canker vs Die Back
-    if (totalDarkSpots > 40 || totalYellowHalos > 30) {
-      if (totalYellowHalos > totalDarkSpots * 0.8) {
-        // Distinct angular lesions with prominent yellow halos -> Bacterial Canker
-        extractGridClusters(
-          (cell) => cell.darkSpots + cell.yellowHalos * 2,
-          'bacterial-canker',
-          'Bacterial Canker',
-          'Xanthomonas citri pv. mangiferaeindicae',
-          'Bacterial',
-          'High',
-          6
-        );
-      } else {
-        // Dark irregular necrotic lesions with shot holes -> Anthracnose
-        extractGridClusters(
-          (cell) => cell.darkSpots * 2 + cell.yellowHalos,
-          'anthracnose',
-          'Anthracnose',
-          'Colletotrichum gloeosporioides',
-          'Fungal',
-          'Moderate',
-          6
-        );
-      }
+    // 5. Anthracnose (Dark brown/black necrotic circular spots)
+    if (totalDarkSpots > 30) {
+      extractGridClusters(
+        (cell) => cell.darkSpots * 2,
+        'anthracnose',
+        'Anthracnose',
+        'Colletotrichum gloeosporioides',
+        'Fungal',
+        'Moderate',
+        5
+      );
     }
 
-    // 5. Brown Necrosis / Margin Desiccation (Die Back)
-    if (totalBrownNecrosis > 70 && rawDetections.length === 0) {
+    // 6. Die Back (Basipetal brown necrosis / margin desiccation)
+    if (totalBrownNecrosis > 45) {
       extractGridClusters(
-        (cell) => cell.brownNecrosis,
+        (cell) => cell.brownNecrosis * 1.5,
         'die-back',
         'Die Back',
         'Lasiodiplodia theobromae',
         'Fungal / Vascular',
         'High',
-        8
+        6
+      );
+    }
+
+    // 7. Cutting Weevil (Marginal notched cuts / serrated lamina loss)
+    if (totalDarkSpots > 20 && totalBrownNecrosis > 20) {
+      extractGridClusters(
+        (cell) => cell.darkSpots + cell.brownNecrosis,
+        'cutting-weevil',
+        'Cutting Weevil',
+        'Deporaus marginatus',
+        'Pest / Insect Damage',
+        'Moderate',
+        5
       );
     }
 
@@ -638,15 +637,37 @@ function applyClientNMS(boxes, iouThreshold = 0.35) {
   return keep;
 }
 
-/**
- * Loads an image URL/dataURL into an HTMLImageElement
- */
 function loadImageElement(url) {
   return new Promise((resolve, reject) => {
+    if (!url) return reject(new Error('Empty image URL'));
     const img = new Image();
-    img.crossOrigin = 'anonymous';
-    img.onload = () => resolve(img);
-    img.onerror = (e) => reject(e);
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (!settled) {
+        settled = true;
+        reject(new Error('Image load timed out'));
+      }
+    }, 4000);
+
+    // Only set crossOrigin for remote http/https urls (never blob: or data:)
+    if (typeof url === 'string' && (url.startsWith('http://') || url.startsWith('https://'))) {
+      img.crossOrigin = 'anonymous';
+    }
+
+    img.onload = () => {
+      if (!settled) {
+        settled = true;
+        clearTimeout(timer);
+        resolve(img);
+      }
+    };
+    img.onerror = (e) => {
+      if (!settled) {
+        settled = true;
+        clearTimeout(timer);
+        reject(e || new Error('Image load failed'));
+      }
+    };
     img.src = url;
   });
 }

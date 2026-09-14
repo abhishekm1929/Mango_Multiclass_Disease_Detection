@@ -1,5 +1,5 @@
 import React from 'react';
-import { Trash2, RefreshCw, Sparkles, FileText, CheckCircle, ShieldCheck } from 'lucide-react';
+import { Trash2, RefreshCw, Sparkles } from 'lucide-react';
 import { Button } from '../common/Button';
 
 export const ImagePreview = ({ image, onRemove, onAnalyze, isAnalyzing }) => {

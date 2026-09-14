@@ -37,11 +37,15 @@ export const Detection = ({ _initialSampleId, onClearInitialSample }) => {
         }
       );
 
-      setPredictionResult(result);
-      setStage('result');
+      if (result) {
+        setPredictionResult(result);
+        setStage('result');
+      } else {
+        throw new Error('No prediction output received');
+      }
     } catch (err) {
       console.error('Analysis error:', err);
-      setToastMessage('An error occurred during pattern classification. Please try again.');
+      setToastMessage('An error occurred during analysis. Please try again or test with another photo.');
       setStage('selected');
     }
   };

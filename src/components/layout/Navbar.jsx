@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Leaf, Menu, X, Sparkles, Activity, BookOpen, Info, ShieldCheck } from 'lucide-react';
+import { Leaf, Menu, X, Sparkles, Activity, BookOpen, Info } from 'lucide-react';
 import { Button } from '../common/Button';
 
 export const Navbar = ({ activePage, onNavigate }) => {

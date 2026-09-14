@@ -4,6 +4,10 @@ import sys
 # Ensure backend directory is in sys.path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+import gc
+import torch
+torch.set_num_threads(2)
+
 from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse

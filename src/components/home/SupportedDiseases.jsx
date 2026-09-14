@@ -1,7 +1,7 @@
 import React from 'react';
 import { DISEASE_CLASSES } from '../../data/diseases';
 import { Badge, RiskBadge } from '../common/Badge';
-import { ArrowUpRight, ShieldCheck, AlertTriangle, Bug, Droplets, Wind, Sparkles } from 'lucide-react';
+import { ArrowUpRight, ShieldCheck, AlertTriangle, Bug, Droplets } from 'lucide-react';
 
 export const SupportedDiseases = ({ onExploreDiseases }) => {
   const getDiseaseIcon = (category) => {

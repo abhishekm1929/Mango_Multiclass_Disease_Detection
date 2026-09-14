@@ -1,5 +1,5 @@
 import React from 'react';
-import { BookOpen, CheckCircle2, AlertCircle, Info, Sparkles } from 'lucide-react';
+import { BookOpen, Info, Sparkles } from 'lucide-react';
 import { Badge, RiskBadge } from '../common/Badge';
 
 export const DiseaseInfo = ({ disease }) => {

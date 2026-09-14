@@ -1,7 +1,6 @@
 import React from 'react';
-import { Sparkles, ArrowRight, ShieldCheck, Activity, Cpu, Layers, CheckCircle2 } from 'lucide-react';
+import { Sparkles, ArrowRight, CheckCircle2 } from 'lucide-react';
 import { Button } from '../common/Button';
-import { Badge } from '../common/Badge';
 
 export const Hero = ({ onStartDetection, onExploreDiseases }) => {
   return (

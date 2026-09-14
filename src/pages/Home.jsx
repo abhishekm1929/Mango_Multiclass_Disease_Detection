@@ -3,7 +3,7 @@ import { Hero } from '../components/home/Hero';
 import { HowItWorks } from '../components/home/HowItWorks';
 import { SupportedDiseases } from '../components/home/SupportedDiseases';
 import { QuickStats } from '../components/home/QuickStats';
-import { Sparkles, ArrowRight, ShieldCheck, Leaf } from 'lucide-react';
+import { Sparkles, ArrowRight, Leaf } from 'lucide-react';
 import { Button } from '../components/common/Button';
 
 export const Home = ({ onNavigate }) => {

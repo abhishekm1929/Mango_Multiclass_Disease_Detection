@@ -1,5 +1,5 @@
 import React from 'react';
-import { Loader2, Check, Sparkles, Cpu, Scan } from 'lucide-react';
+import { Loader2, Check, Scan } from 'lucide-react';
 
 export const AnalysisLoader = ({ previewUrl, activeStepIndex = 1 }) => {
   const steps = [

@@ -1,5 +1,5 @@
 import React from 'react';
-import { BarChart3, TrendingUp, Layers } from 'lucide-react';
+import { BarChart3 } from 'lucide-react';
 
 export const PredictionBreakdown = ({ predictions = [], predictedDiseases = [] }) => {
   if (!predictions || predictions.length === 0) return null;
