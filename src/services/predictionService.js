@@ -89,11 +89,18 @@ export async function predictMangoLeafDisease(imageSource, onProgressStep) {
 
   if (onProgressStep) onProgressStep(2); // 3. Neural pattern extraction
 
-  // Fast Backend Probe: Try local backend first with responsive 3.5s timeout
+  // Backend AI Inference: Query FastAPI backend (local, proxy, or live Render cloud)
   if (fileToUpload) {
-    const candidateUrls = ['/predict', 'http://127.0.0.1:8000/predict'];
+    const candidateUrls = [
+      '/predict',
+      'http://127.0.0.1:8000/predict',
+      'https://mango-multiclass-disease-detection.onrender.com/predict'
+    ];
     if (CONFIGURED_API_URL) {
-      candidateUrls.unshift(`${CONFIGURED_API_URL.replace(/\/+$/, '')}/predict`);
+      const cleanConfigUrl = `${CONFIGURED_API_URL.replace(/\/+$/, '')}/predict`;
+      if (!candidateUrls.includes(cleanConfigUrl)) {
+        candidateUrls.unshift(cleanConfigUrl);
+      }
     }
 
     for (const url of candidateUrls) {
@@ -102,7 +109,7 @@ export async function predictMangoLeafDisease(imageSource, onProgressStep) {
         formData.append('file', fileToUpload);
 
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 3500);
+        const timeoutId = setTimeout(() => controller.abort(), 30000);
 
         const response = await fetch(url, {
           method: 'POST',
@@ -120,7 +127,6 @@ export async function predictMangoLeafDisease(imageSource, onProgressStep) {
           }
         }
       } catch (err) {
-        // Fast failover to client-side engine without blocking user
         console.warn(`[PredictionService] Backend probe at ${url} unavailable:`, err.message || err);
       }
     }

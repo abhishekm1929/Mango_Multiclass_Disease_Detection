@@ -76,11 +76,7 @@ class YOLOv8Detector:
         morph_dets = self._detect_pathology_morphology(np_rgb, w_img, h_img, target_disease)
         raw_candidates.extend(morph_dets)
 
-        # 3. Multiscale Spatial Quadrant Proposals (ensures co-occurring pathologies across leaf are captured)
-        quad_dets = self._extract_multiscale_quadrant_proposals(np_rgb, w_img, h_img)
-        raw_candidates.extend(quad_dets)
-
-        # 4. Optional YOLO proposals
+        # 3. Optional YOLO proposals
         if self.yolo_model is not None:
             raw_candidates.extend(self._detect_with_yolo(np_rgb, w_img, h_img))
 
