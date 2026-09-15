@@ -103,14 +103,15 @@ export async function predictMangoLeafDisease(imageSource, onProgressStep) {
       }
     }
 
-    for (const url of candidateUrls) {
+    const fetchEndpoint = async (url) => {
+      const formData = new FormData();
+      formData.append('file', fileToUpload);
+
+      const controller = new AbortController();
+      const timeoutMs = url.includes('127.0.0.1') || url.startsWith('/') ? 3500 : 6000;
+      const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
       try {
-        const formData = new FormData();
-        formData.append('file', fileToUpload);
-
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 30000);
-
         const response = await fetch(url, {
           method: 'POST',
           body: formData,
@@ -121,14 +122,20 @@ export async function predictMangoLeafDisease(imageSource, onProgressStep) {
         if (response.ok) {
           const resJson = await response.json();
           if (resJson && resJson.success !== false) {
-            data = resJson;
             console.info(`[PredictionService] Inference succeeded via: ${url}`);
-            break;
+            return resJson;
           }
         }
       } catch (err) {
-        console.warn(`[PredictionService] Backend probe at ${url} unavailable:`, err.message || err);
+        clearTimeout(timeoutId);
       }
+      throw new Error(`Endpoint ${url} unavailable`);
+    };
+
+    try {
+      data = await Promise.any(candidateUrls.map((u) => fetchEndpoint(u)));
+    } catch {
+      data = null;
     }
   }
 
