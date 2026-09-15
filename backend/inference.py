@@ -60,11 +60,17 @@ class MangoLeafInferenceEngine:
         self.detector = YOLOv8Detector(models_dir=self.models_dir)
         self.model_version = f"{self.detector.model_version} + {self.classifier.model_name}"
 
-    def preprocess_image(self, file_bytes):
-        """Decode and validate image bytes into RGB numpy array with EXIF auto-rotation."""
+    def preprocess_image(self, file_bytes, max_dim=800):
+        """Decode, auto-rotate EXIF, and downscale to efficient dimension for fast CPU inference & low RAM."""
         try:
             raw_img = Image.open(io.BytesIO(file_bytes))
             pil_img = ImageOps.exif_transpose(raw_img).convert("RGB")
+            w, h = pil_img.size
+            if max(w, h) > max_dim:
+                scale = max_dim / float(max(w, h))
+                new_w = max(16, int(w * scale))
+                new_h = max(16, int(h * scale))
+                pil_img = pil_img.resize((new_w, new_h), Image.Resampling.BILINEAR)
             np_rgb = np.array(pil_img)
             return np_rgb, pil_img.size
         except Exception as e:

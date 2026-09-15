@@ -69,6 +69,7 @@ async def predict_mango_leaf(file: UploadFile = File(...)):
             raise HTTPException(status_code=400, detail="Uploaded file is empty.")
 
         result = engine.predict(contents)
+        gc.collect()
         return JSONResponse(content=result)
     except ValueError as ve:
         raise HTTPException(status_code=400, detail=str(ve))
