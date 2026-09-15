@@ -125,9 +125,12 @@ class MangoLeafInferenceEngine:
             )
 
         # ---------------------------------------------------------------------
-        # STAGE 3: Crop EACH Detected Bounding Box & Classify Independently
+        # STAGE 3: Crop EACH Detected Bounding Box & Classify Independently (Batched)
         # ---------------------------------------------------------------------
         enriched_detections = []
+        valid_crops = []
+        valid_meta = []
+
         for idx, det in enumerate(raw_detections):
             x1, y1, x2, y2 = det["bbox"]
             box_w = x2 - x1
@@ -146,38 +149,44 @@ class MangoLeafInferenceEngine:
             if crop_patch.shape[0] < 12 or crop_patch.shape[1] < 12:
                 continue
 
-            cnn_result = self.classifier.classify_crop(crop_patch)
-            crop_disease = cnn_result["disease"]
-            crop_id = cnn_result["disease_id"]
-            crop_conf = cnn_result["cnn_confidence"]
+            valid_crops.append(crop_patch)
+            valid_meta.append((x1, y1, x2, y2, box_w, box_h, det))
 
-            if crop_id == "healthy" or crop_conf < 50.0:
-                continue
+        if valid_crops:
+            batch_results = self.classifier.classify_crops_batch(valid_crops)
+            for i, cnn_result in enumerate(batch_results):
+                crop_disease = cnn_result["disease"]
+                crop_id = cnn_result["disease_id"]
+                crop_conf = cnn_result["cnn_confidence"]
 
-            disease_meta = CLASS_MAP.get(crop_id, cnn_result)
+                if crop_id == "healthy" or crop_conf < 50.0:
+                    continue
 
-            enriched_detections.append({
-                "x1": int(x1),
-                "y1": int(y1),
-                "x2": int(x2),
-                "y2": int(y2),
-                "bbox": [int(x1), int(y1), int(x2), int(y2)],
-                "relative_bbox": det.get("relative_bbox", [
-                    round(x1 / w_orig, 4),
-                    round(y1 / h_orig, 4),
-                    round(x2 / w_orig, 4),
-                    round(y2 / h_orig, 4)
-                ]),
-                "area": int(det.get("area", box_w * box_h)),
-                "disease": crop_disease,
-                "disease_id": crop_id,
-                "scientific_name": disease_meta.get("scientific_name", ""),
-                "category": disease_meta.get("category", ""),
-                "risk": disease_meta.get("risk", "Moderate"),
-                "confidence": crop_conf,
-                "cnn_confidence": crop_conf,
-                "distribution": cnn_result.get("distribution", {})
-            })
+                x1, y1, x2, y2, box_w, box_h, det = valid_meta[i]
+                disease_meta = CLASS_MAP.get(crop_id, cnn_result)
+
+                enriched_detections.append({
+                    "x1": int(x1),
+                    "y1": int(y1),
+                    "x2": int(x2),
+                    "y2": int(y2),
+                    "bbox": [int(x1), int(y1), int(x2), int(y2)],
+                    "relative_bbox": det.get("relative_bbox", [
+                        round(x1 / w_orig, 4),
+                        round(y1 / h_orig, 4),
+                        round(x2 / w_orig, 4),
+                        round(y2 / h_orig, 4)
+                    ]),
+                    "area": int(det.get("area", box_w * box_h)),
+                    "disease": crop_disease,
+                    "disease_id": crop_id,
+                    "scientific_name": disease_meta.get("scientific_name", ""),
+                    "category": disease_meta.get("category", ""),
+                    "risk": disease_meta.get("risk", "Moderate"),
+                    "confidence": crop_conf,
+                    "cnn_confidence": crop_conf,
+                    "distribution": cnn_result.get("distribution", {})
+                })
 
         # ---------------------------------------------------------------------
         # STAGE 4: Diagnostic Resolution (Healthy vs Single-Disease vs Multi-Disease)

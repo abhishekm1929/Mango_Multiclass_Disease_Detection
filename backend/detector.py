@@ -40,9 +40,6 @@ class YOLOv8Detector:
             return
 
         pt_files = glob.glob(os.path.join(self.models_dir, "*mango*.pt"))
-        if not pt_files:
-            pt_files = glob.glob(os.path.join(self.models_dir, "*.pt"))
-
         if pt_files and HAS_ULTRALYTICS:
             try:
                 self.yolo_model = YOLO(pt_files[0])
@@ -50,6 +47,9 @@ class YOLOv8Detector:
                 print(f"[YOLO Detector] Initialized detection engine with: {pt_files[0]}")
             except Exception as e:
                 print(f"[YOLO Detector] Error initializing YOLO model: {e}")
+        else:
+            self.yolo_model = None
+            self.model_version = "CAM-Morphology-Localization"
 
     def detect_regions(self, np_rgb, cam_heatmaps=None, target_disease=None):
         """
@@ -135,42 +135,7 @@ class YOLOv8Detector:
 
         return detections
 
-    def _extract_multiscale_quadrant_proposals(self, np_rgb, w_img, h_img):
-        """Generates candidate sub-regions across leaf quadrants for multi-disease verification."""
-        if not HAS_CV2:
-            return []
 
-        proposals = []
-        # Spatial partitions: Left-half, Right-half, Top-half, Bottom-half, and 4 quadrants
-        pad = 8
-        boxes = [
-            (pad, pad, int(w_img * 0.52), int(h_img * 0.52)),
-            (int(w_img * 0.48), pad, w_img - pad, int(h_img * 0.52)),
-            (pad, int(h_img * 0.48), int(w_img * 0.52), h_img - pad),
-            (int(w_img * 0.48), int(h_img * 0.48), w_img - pad, h_img - pad),
-            (pad, pad, int(w_img * 0.55), h_img - pad),
-            (int(w_img * 0.45), pad, w_img - pad, h_img - pad),
-            (pad, pad, w_img - pad, int(h_img * 0.55)),
-            (pad, int(h_img * 0.45), w_img - pad, h_img - pad),
-        ]
-
-        for x1, y1, x2, y2 in boxes:
-            if (x2 - x1) < 40 or (y2 - y1) < 40:
-                continue
-            proposals.append({
-                "bbox": [x1, y1, x2, y2],
-                "relative_bbox": [
-                    round(x1 / w_img, 4),
-                    round(y1 / h_img, 4),
-                    round(x2 / w_img, 4),
-                    round(y2 / h_img, 4)
-                ],
-                "confidence": 80.0,
-                "area": int((x2 - x1) * (y2 - y1)),
-                "source": "quadrant"
-            })
-
-        return proposals
 
     def _detect_pathology_morphology(self, np_rgb, w_img, h_img, target_disease=None):
         """
