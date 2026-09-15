@@ -56,18 +56,23 @@ FOLDER_ALIAS_MAP = {
 
 
 def get_training_transforms(image_size=224):
-    """Rich data augmentation pipeline for training EfficientNet-B0 on mango leaf images."""
+    """
+    Rich data augmentation pipeline for training EfficientNet-B0 on mango leaf images.
+    Includes background invariance transformations, rotations, flips, perspective jitter, and random erasing.
+    """
     if not HAS_TRANSFORMS:
         raise RuntimeError("torchvision.transforms is required for data augmentation.")
 
     return transforms.Compose([
         transforms.Resize((image_size + 32, image_size + 32)),
-        transforms.RandomResizedCrop(image_size, scale=(0.75, 1.0)),
+        transforms.RandomResizedCrop(image_size, scale=(0.70, 1.0)),
         transforms.RandomHorizontalFlip(p=0.5),
-        transforms.RandomVerticalFlip(p=0.3),
-        transforms.RandomRotation(degrees=25),
-        transforms.ColorJitter(brightness=0.20, contrast=0.20, saturation=0.20, hue=0.05),
+        transforms.RandomVerticalFlip(p=0.5),
+        transforms.RandomRotation(degrees=45),
+        transforms.RandomPerspective(distortion_scale=0.15, p=0.35),
+        transforms.ColorJitter(brightness=0.25, contrast=0.25, saturation=0.25, hue=0.08),
         transforms.ToTensor(),
+        transforms.RandomErasing(p=0.25, scale=(0.02, 0.20), value='random'),
         transforms.Normalize(
             mean=[0.485, 0.456, 0.406],
             std=[0.229, 0.224, 0.225]

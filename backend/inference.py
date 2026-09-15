@@ -6,6 +6,7 @@ from PIL import Image, ImageOps
 
 try:
     from detector import YOLOv8Detector
+    from leaf_segmenter import segmenter
     from classifier import (
         EfficientNetMangoClassifier,
         DISEASE_CLASSES,
@@ -17,6 +18,7 @@ try:
     )
 except ImportError:
     from backend.detector import YOLOv8Detector
+    from backend.leaf_segmenter import segmenter
     from backend.classifier import (
         EfficientNetMangoClassifier,
         DISEASE_CLASSES,
@@ -30,11 +32,12 @@ except ImportError:
 
 class MangoLeafInferenceEngine:
     """
-    Two-Stage Deep Learning Inference Pipeline for Mango Leaf Disease Diagnosis:
-    1. EfficientNet-B0 Whole-Leaf Neural Classification & Multi-Class Activation Mapping (CAM).
-    2. High-Precision Spatial Lesion Localization (CAM + Morphological Contours + Strict NMS).
-    3. Independent Crop Patch Verification via CNN Forward Passes.
-    4. Multi-Disease vs Single-Disease vs Healthy Diagnostic Resolution.
+    State-of-the-Art Multi-Stage Deep Learning Inference Pipeline for Mango Foliage Pathology:
+    1. Botanical Leaf Lamina Segmentation & Background Elimination (Rejects paper, text, ground, desks, hands).
+    2. EfficientNet-B0 Whole-Leaf Neural Classification & Multi-Class Saliency Activation Mapping (CAM).
+    3. Leaf-Constrained Spatial Lesion Localization (CAM + Morphological Contours + Strict NMS).
+    4. Independent Neural Patch Verification on Localized Lesion Crops.
+    5. Diagnostic Resolution across Single-Disease, Multi-Disease, Healthy, and Non-Leaf Images.
     """
     def __init__(self, models_dir=None, cnn_weights_path=None):
         base_dir = os.path.dirname(os.path.abspath(__file__))
@@ -79,10 +82,45 @@ class MangoLeafInferenceEngine:
     def predict(self, file_bytes):
         """
         Executes end-to-end multi-region inference:
-          Image -> Whole-Leaf CNN & CAM -> Saliency Lesion Detection -> Crop Verification -> Resolution
+          Image -> Leaf Segmentation -> Whole-Leaf CNN & CAM -> Leaf-Bounded Lesion Detection -> Patch Verification -> Resolution
         """
         start_time = time.time()
         np_rgb, (w_orig, h_orig) = self.preprocess_image(file_bytes)
+
+        # ---------------------------------------------------------------------
+        # STAGE 0: Botanical Leaf Segmentation & Background Rejection
+        # ---------------------------------------------------------------------
+        seg_res = segmenter.segment(np_rgb)
+        leaf_mask = seg_res["leaf_mask"]
+        masked_rgb = seg_res["masked_rgb"]
+        is_leaf_present = seg_res["is_leaf_present"]
+        leaf_coverage = seg_res["leaf_coverage_pct"]
+        leaf_bbox = seg_res["leaf_bbox"]
+
+        # If no leaf is present in the image (e.g. pure paper with text, floor, table, etc.)
+        if not is_leaf_present or leaf_coverage < 2.5:
+            exec_time = int((time.time() - start_time) * 1000)
+            return {
+                "success": False,
+                "disease": "No Mango Leaf Detected",
+                "disease_id": "no-leaf",
+                "confidence": 0.0,
+                "status": "No Mango Leaf Detected",
+                "risk": "None",
+                "is_healthy": False,
+                "is_multiple_diseases": False,
+                "is_leaf_detected": False,
+                "leaf_coverage_pct": leaf_coverage,
+                "predicted_diseases": [],
+                "all_predictions": [],
+                "predictions": [],
+                "detections": [],
+                "summary": "No mango leaf was detected in the submitted image. Background objects (paper, ground, desk, or shadows) were safely filtered. Please position a real mango leaf clearly within the camera frame.",
+                "execution_time_ms": exec_time,
+                "executionTimeMs": exec_time,
+                "model_version": self.model_version,
+                "modelVersion": self.model_version
+            }
 
         # ---------------------------------------------------------------------
         # STAGE 1: Global Whole-Leaf Neural Classification & CAM Saliency
@@ -114,14 +152,15 @@ class MangoLeafInferenceEngine:
                     cam_heatmaps.append(cam_sec)
 
         # ---------------------------------------------------------------------
-        # STAGE 2: Spatial Lesion Localization (CAM + Morphological Contours)
+        # STAGE 2: Spatial Lesion Localization (Leaf-Constrained)
         # ---------------------------------------------------------------------
         raw_detections = []
         if leaf_id != "healthy" or leaf_conf < 80.0:
             raw_detections = self.detector.detect_regions(
                 np_rgb,
                 cam_heatmaps=cam_heatmaps,
-                target_disease=leaf_id
+                target_disease=leaf_id,
+                leaf_mask=leaf_mask
             )
 
         # ---------------------------------------------------------------------
@@ -250,11 +289,11 @@ class MangoLeafInferenceEngine:
                             confirmed_diseases[d_id]["confidence"] = d_conf
                             confirmed_diseases[d_id]["cnn_confidence"] = d_conf
 
-                # Case B: Box proposes a SECONDARY disease (requires strong evidence >= 82% AND non-trivial global activation)
+                # Case B: Box proposes a SECONDARY disease (requires strong dual evidence >= 88% AND global activation >= 12% or localized confidence >= 94%)
                 else:
                     global_secondary_prob = float(whole_leaf_cnn["distribution"].get(d_name, 0.0))
-                    # Secondary disease confirmed ONLY if high local confidence and non-trivial support
-                    if d_conf >= 82.0 and (global_secondary_prob >= 3.0 or d_conf >= 90.0):
+                    # Secondary disease confirmed ONLY if high local confidence and significant global activation
+                    if d_conf >= 88.0 and (global_secondary_prob >= 12.0 or d_conf >= 94.0):
                         valid_detections.append(d)
                         if d_id not in confirmed_diseases:
                             confirmed_diseases[d_id] = {
@@ -276,7 +315,7 @@ class MangoLeafInferenceEngine:
                                 confirmed_diseases[d_id]["confidence"] = d_conf
                                 confirmed_diseases[d_id]["cnn_confidence"] = d_conf
                     elif d_conf >= 60.0 and leaf_id != "healthy":
-                        # If the crop had lower confidence on secondary, re-assign box to the confirmed primary pathology
+                        # If the crop had moderate confidence on primary pathology, re-assign
                         d_remapped = dict(d)
                         d_remapped["disease"] = leaf_disease
                         d_remapped["disease_id"] = leaf_id
@@ -291,18 +330,24 @@ class MangoLeafInferenceEngine:
 
             final_detections = valid_detections
 
-            # If no local box was found but whole-leaf is diseased, create canonical leaf focus box
+            # If no local box was found but whole-leaf is diseased, create canonical leaf focus box within leaf_bbox
             if not final_detections and confirmed_diseases:
                 top_k = list(confirmed_diseases.keys())[0]
                 top_d = confirmed_diseases[top_k]
+                lx1, ly1, lx2, ly2 = leaf_bbox
                 final_detections.append({
-                    "x1": int(w_orig * 0.12),
-                    "y1": int(h_orig * 0.12),
-                    "x2": int(w_orig * 0.88),
-                    "y2": int(h_orig * 0.88),
-                    "bbox": [int(w_orig * 0.12), int(h_orig * 0.12), int(w_orig * 0.88), int(h_orig * 0.88)],
-                    "relative_bbox": [0.12, 0.12, 0.88, 0.88],
-                    "area": int(w_orig * h_orig * 0.58),
+                    "x1": int(lx1),
+                    "y1": int(ly1),
+                    "x2": int(lx2),
+                    "y2": int(ly2),
+                    "bbox": [int(lx1), int(ly1), int(lx2), int(ly2)],
+                    "relative_bbox": [
+                        round(lx1 / w_orig, 4),
+                        round(ly1 / h_orig, 4),
+                        round(lx2 / w_orig, 4),
+                        round(ly2 / h_orig, 4)
+                    ],
+                    "area": int((lx2 - lx1) * (ly2 - ly1)),
                     "disease": top_d["name"],
                     "disease_id": top_d["disease_id"],
                     "scientific_name": top_d.get("scientific_name", ""),
@@ -355,6 +400,9 @@ class MangoLeafInferenceEngine:
             "risk": risk,
             "is_healthy": is_healthy,
             "is_multiple_diseases": is_multiple,
+            "is_leaf_detected": True,
+            "leaf_coverage_pct": leaf_coverage,
+            "leaf_bbox": leaf_bbox,
             "predicted_diseases": predicted_diseases,
             "all_predictions": all_predictions,
             "predictions": all_predictions,

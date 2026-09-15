@@ -14,11 +14,16 @@ try:
 except ImportError:
     HAS_ULTRALYTICS = False
 
+try:
+    from leaf_segmenter import segmenter
+except ImportError:
+    from backend.leaf_segmenter import segmenter
+
 
 class YOLOv8Detector:
     """
     High-Precision Mango Leaf Lesion Localization Engine.
-    Combines deep convolutional Class Activation Mapping (CAM),
+    Combines botanical leaf foreground segmentation, deep Class Activation Mapping (CAM),
     morphological pathology segmentation across distinct disease phenotypes,
     and strict Non-Maximum Suppression (NMS) to precisely locate diseased areas.
     """
@@ -51,9 +56,9 @@ class YOLOv8Detector:
             self.yolo_model = None
             self.model_version = "CAM-Morphology-Localization"
 
-    def detect_regions(self, np_rgb, cam_heatmaps=None, target_disease=None):
+    def detect_regions(self, np_rgb, cam_heatmaps=None, target_disease=None, leaf_mask=None):
         """
-        Detects candidate pathological lesion regions and outputs spatial bounding boxes.
+        Detects candidate pathological lesion regions strictly within the leaf lamina.
         Returns a clean list of non-overlapping dicts:
           - 'bbox': [x1, y1, x2, y2]
           - 'relative_bbox': [rx1, ry1, rx2, ry2]
@@ -61,19 +66,28 @@ class YOLOv8Detector:
           - 'area': int
         """
         h_img, w_img = np_rgb.shape[:2]
+
+        # 0. If leaf mask not provided, segment leaf foreground
+        if leaf_mask is None:
+            seg_res = segmenter.segment(np_rgb)
+            leaf_mask = seg_res["leaf_mask"]
+            if not seg_res["is_leaf_present"]:
+                # Pure background / non-leaf image -> return 0 detections
+                return []
+
         raw_candidates = []
 
-        # 1. CAM Saliency Contours (supports multiple class heatmaps for multi-disease diagnosis)
+        # 1. CAM Saliency Contours
         if cam_heatmaps is not None and HAS_CV2:
             if isinstance(cam_heatmaps, list):
                 for cam in cam_heatmaps:
                     if cam is not None:
-                        raw_candidates.extend(self._extract_cam_regions(cam, w_img, h_img))
+                        raw_candidates.extend(self._extract_cam_regions(cam, w_img, h_img, leaf_mask))
             elif isinstance(cam_heatmaps, np.ndarray):
-                raw_candidates.extend(self._extract_cam_regions(cam_heatmaps, w_img, h_img))
+                raw_candidates.extend(self._extract_cam_regions(cam_heatmaps, w_img, h_img, leaf_mask))
 
         # 2. Individual Botanical Pathology Morphological Lesion Masks
-        morph_dets = self._detect_pathology_morphology(np_rgb, w_img, h_img, target_disease)
+        morph_dets = self._detect_pathology_morphology(np_rgb, w_img, h_img, target_disease, leaf_mask)
         raw_candidates.extend(morph_dets)
 
         # 3. Optional YOLO proposals
@@ -83,17 +97,25 @@ class YOLOv8Detector:
         if not raw_candidates:
             return []
 
-        # Apply strict Non-Maximum Suppression (IoU 0.35)
-        clean_detections = self.apply_nms(raw_candidates, iou_threshold=0.35)
+        # 4. Filter all boxes to lie strictly on the leaf blade (reject paper, table, ground)
+        leaf_filtered = segmenter.filter_boxes_to_leaf(raw_candidates, leaf_mask, min_overlap=0.60)
+
+        # 5. Apply strict Non-Maximum Suppression (IoU 0.35)
+        clean_detections = self.apply_nms(leaf_filtered, iou_threshold=0.35)
 
         return clean_detections[:10]
 
-    def _extract_cam_regions(self, cam_heatmap, w_img, h_img):
+    def _extract_cam_regions(self, cam_heatmap, w_img, h_img, leaf_mask=None):
         """Extracts bounding boxes from neural class activation heatmaps."""
         detections = []
         try:
             cam_resized = cv2.resize(cam_heatmap, (w_img, h_img), interpolation=cv2.INTER_LINEAR)
-            thresh_val = max(0.32, float(np.percentile(cam_resized, 68)))
+            
+            # Mask CAM with leaf mask so activations on background are zeroed out
+            if leaf_mask is not None:
+                cam_resized[leaf_mask == 0] = 0.0
+
+            thresh_val = max(0.35, float(np.percentile(cam_resized[cam_resized > 0] if np.any(cam_resized > 0) else cam_resized, 70)))
             binary_mask = (cam_resized >= thresh_val).astype(np.uint8) * 255
 
             kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
@@ -103,14 +125,14 @@ class YOLOv8Detector:
             total_area = w_img * h_img
             for cnt in contours:
                 area = cv2.contourArea(cnt)
-                if area < (total_area * 0.008) or area > (total_area * 0.70):
+                if area < (total_area * 0.008) or area > (total_area * 0.65):
                     continue
                 x, y, w, h = cv2.boundingRect(cnt)
                 if w < 16 or h < 16:
                     continue
 
-                pad_x = int(w * 0.10)
-                pad_y = int(h * 0.10)
+                pad_x = int(w * 0.08)
+                pad_y = int(h * 0.08)
                 x1 = max(0, x - pad_x)
                 y1 = max(0, y - pad_y)
                 x2 = min(w_img, x + w + pad_x)
@@ -135,13 +157,11 @@ class YOLOv8Detector:
 
         return detections
 
-
-
-    def _detect_pathology_morphology(self, np_rgb, w_img, h_img, target_disease=None):
+    def _detect_pathology_morphology(self, np_rgb, w_img, h_img, target_disease=None, leaf_mask=None):
         """
-        Adaptive multi-phenotype lesion contour extraction across all 8 pathology categories.
+        Adaptive multi-phenotype lesion contour extraction strictly within leaf lamina.
         Extracts necrotic spots, canker halos, powdery mycelium, sooty molds, gall pustules,
-        cutting damage, and margin die-back desiccation independently.
+        cutting damage, and margin die-back desiccation.
         """
         if not HAS_CV2:
             return []
@@ -154,62 +174,53 @@ class YOLOv8Detector:
 
         img_bgr = cv2.cvtColor(np_rgb, cv2.COLOR_RGB2BGR)
         img_hsv = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2HSV)
-        h_channel = img_hsv[:, :, 0].astype(np.float32)
         s_channel = img_hsv[:, :, 1].astype(np.float32)
         v_channel = img_hsv[:, :, 2].astype(np.float32)
 
-        # 1. Background & Specular Sunlight Glare Filter
-        background_glare = (
-            ((v_channel > 248) & (s_channel < 12)) |
-            ((h_channel >= 95) & (h_channel <= 150) & (s_channel >= 20) & (brightness > 160))
-        )
+        # Restrict strictly to inside the segmented leaf
+        if leaf_mask is not None:
+            is_leaf_blade = (leaf_mask > 0)
+        else:
+            is_leaf_blade = (v_channel < 235) & (s_channel > 15)
 
-        # 2. Active Leaf Blade Lamina
-        is_leaf = (
-            ((h_channel >= 8) & (h_channel <= 110) & (s_channel >= 8)) |
-            ((g > r * 0.70) & (g > b * 0.70) & (brightness > 12) & (brightness < 242)) |
-            ((r > 30) & (g > 20) & (brightness > 12) & (brightness < 242) & ~background_glare)
-        ) & ~background_glare
-
-        # 3. Independent Pathology Phenotype Masks
-        # A) Anthracnose (Dark necrotic spots & shot holes)
+        # 1. Anthracnose (Dark necrotic spots & shot holes)
         dark_necrotic = (
-            (((brightness < 88) & (brightness > 5)) |
-             ((r > b + 8) & (r > g - 15) & (brightness < 185) & (s_channel > 15))) &
-            is_leaf & ~background_glare
+            (((brightness < 80) & (brightness > 8)) |
+             ((r > b + 10) & (r > g - 12) & (brightness < 170) & (s_channel > 20))) &
+            is_leaf_blade
         )
 
-        # B) Bacterial Canker (Angular water-soaked lesions + yellow chlorotic halos)
+        # 2. Bacterial Canker (Angular water-soaked lesions + yellow chlorotic halos)
         chlorotic_canker = (
-            ((r > 115) & (g > 90) & (b < 115) & (r > b + 12) & (brightness > 35)) &
-            is_leaf & ~background_glare
+            ((r > 120) & (g > 95) & (b < 115) & (r > b + 15) & (brightness > 40) & (brightness < 210)) &
+            is_leaf_blade
         )
 
-        # C) Powdery Mildew (Whitish mycelial fungal coating)
+        # 3. Powdery Mildew (Whitish mycelial fungal coating on leaf surface)
         powdery = (
-            (brightness > 155) & (brightness <= 248) &
-            (np.abs(r - g) < 26) & (np.abs(g - b) < 26) &
-            (s_channel < 52) & (g > 25) &
-            is_leaf & ~background_glare
+            (brightness > 160) & (brightness <= 240) &
+            (np.abs(r - g) < 22) & (np.abs(g - b) < 22) &
+            (s_channel < 48) & (s_channel > 10) &
+            is_leaf_blade
         )
 
-        # D) Sooty Mold (Superficial black coating)
+        # 4. Sooty Mold (Superficial dense black coating)
         sooty = (
-            (brightness < 52) & (brightness > 4) &
-            (s_channel < 70) & (r < 65) & (g < 65) & (b < 65) &
-            is_leaf & ~background_glare
+            (brightness < 48) & (brightness > 5) &
+            (s_channel < 65) & (r < 60) & (g < 60) & (b < 60) &
+            is_leaf_blade
         )
 
-        # E) Gall Midge (Elevated pustules/galls, small yellowish-brown blister bumps)
+        # 5. Gall Midge (Elevated pustules/galls, blister bumps)
         gall_midge = (
-            ((r > 125) & (r > b + 25) & (g > 85) & (g < 165) & (brightness > 65) & (brightness < 175)) &
-            is_leaf & ~background_glare
+            ((r > 130) & (r > b + 25) & (g > 90) & (g < 165) & (brightness > 65) & (brightness < 175)) &
+            is_leaf_blade
         )
 
-        # F) Die Back (Brown necrosis / margin desiccation along leaf margins and veins)
+        # 6. Die Back (Brown necrosis / margin desiccation)
         die_back = (
-            ((r > b + 12) & (r > g - 8) & (brightness > 30) & (brightness < 205) & (s_channel > 18)) &
-            is_leaf & ~background_glare
+            ((r > b + 14) & (r > g - 6) & (brightness > 35) & (brightness < 195) & (s_channel > 22)) &
+            is_leaf_blade
         )
 
         phenotype_masks = [
@@ -221,8 +232,8 @@ class YOLOv8Detector:
             ("dieback", die_back)
         ]
 
-        min_area = max(70, int(total_pixels * 0.0006))
-        max_area = int(total_pixels * 0.65)
+        min_area = max(80, int(total_pixels * 0.0008))
+        max_area = int(total_pixels * 0.60)
         detections = []
 
         kernel_close = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
@@ -244,8 +255,8 @@ class YOLOv8Detector:
                     if w < 16 or h < 16 or (w >= w_img * 0.90 and h >= h_img * 0.90):
                         continue
 
-                    pad_x = max(6, int(w * 0.12))
-                    pad_y = max(6, int(h * 0.12))
+                    pad_x = max(6, int(w * 0.10))
+                    pad_y = max(6, int(h * 0.10))
                     x1 = max(0, x - pad_x)
                     y1 = max(0, y - pad_y)
                     x2 = min(w_img, x + w + pad_x)
@@ -287,7 +298,7 @@ class YOLOv8Detector:
                         y2 = max(y1 + 1, min(h_img, int(xyxy[3])))
                         area = (x2 - x1) * (y2 - y1)
 
-                        if area >= (w_img * h_img * 0.70):
+                        if area >= (w_img * h_img * 0.65):
                             continue
 
                         detections.append({

@@ -1,8 +1,9 @@
 import os
 import io
 import glob
+import cv2
 import numpy as np
-from PIL import Image, ImageEnhance
+from PIL import Image, ImageEnhance, ImageDraw
 from inference import engine, DISEASE_CLASSES
 
 DATA_DIR = os.path.join(os.path.dirname(__file__), "data", "Mango S data")
@@ -29,6 +30,42 @@ def create_sunlit_healthy_specimen():
     img = enhancer.enhance(1.15)
     buf = io.BytesIO()
     img.save(buf, format="JPEG", quality=95)
+    return buf.getvalue()
+
+def create_leaf_on_printed_paper_background():
+    """
+    Simulates a mango leaf placed on a notebook/printed page with text.
+    The system MUST isolate the leaf, reject the text/paper background, and classify the leaf.
+    """
+    anthracnose_imgs = glob.glob(os.path.join(DATA_DIR, "Anthracnose", "*.*"))
+    leaf_img = Image.open(anthracnose_imgs[0]).convert("RGB").resize((220, 300))
+    
+    # Create white/off-white notebook paper canvas with text lines
+    paper = Image.new("RGB", (500, 420), color=(248, 248, 245))
+    draw = ImageDraw.Draw(paper)
+    # Draw ruled lines and simulated notes
+    for y in range(40, 400, 30):
+        draw.line([(20, y), (480, y)], fill=(210, 220, 235), width=1)
+        draw.text((30, y - 15), "Agronomic Mango Leaf Pathological Sampling Notes - Section 4.2", fill=(45, 50, 60))
+
+    # Paste leaf in the center
+    paper.paste(leaf_img, (140, 60))
+    buf = io.BytesIO()
+    paper.save(buf, format="JPEG", quality=95)
+    return buf.getvalue()
+
+def create_pure_paper_non_leaf_image():
+    """
+    Simulates a non-leaf background image (e.g. document/paper with text, no mango leaf).
+    The system MUST reject this image and report 'No Mango Leaf Detected'.
+    """
+    paper = Image.new("RGB", (400, 300), color=(245, 245, 240))
+    draw = ImageDraw.Draw(paper)
+    for y in range(30, 280, 25):
+        draw.line([(15, y), (385, y)], fill=(200, 210, 225), width=1)
+        draw.text((25, y - 12), "General agricultural research notebook notes page 14", fill=(30, 35, 45))
+    buf = io.BytesIO()
+    paper.save(buf, format="JPEG", quality=95)
     return buf.getvalue()
 
 def create_multi_disease_composite():
@@ -81,20 +118,22 @@ def run_diagnostic_tests():
     print("=" * 75)
 
     test_cases = [
-        ("Healthy Specimen (Sample 1)", lambda: get_sample_image("Healthy", 0), "Healthy", True),
-        ("Healthy Specimen (Sample 2)", lambda: get_sample_image("Healthy", 15), "Healthy", True),
-        ("Harsh Sunlit Healthy Leaf (Glare Invariance)", create_sunlit_healthy_specimen, "Healthy", True),
-        ("Anthracnose Pathological Specimen", lambda: get_sample_image("Anthracnose", 0), "Anthracnose", False),
-        ("Bacterial Canker Pathological Specimen", lambda: get_sample_image("Bacterial Canker", 0), "Bacterial Canker", False),
-        ("Cutting Weevil Specimen", lambda: get_sample_image("Cutting Weevil", 0), "Cutting Weevil", False),
-        ("Die Back Specimen", lambda: get_sample_image("Die Back", 0), "Die Back", False),
-        ("Gall Midge Specimen", lambda: get_sample_image("Gall Midge", 0), "Gall Midge", False),
-        ("Powdery Mildew Specimen", lambda: get_sample_image("Powdery Mildew", 0), "Powdery Mildew", False),
-        ("Sooty Mold Specimen", lambda: get_sample_image("Sooty Mould", 0), "Sooty Mold", False),
-        ("Composite Multi-Disease Leaf (Anthracnose + Powdery Mildew)", create_multi_disease_composite, "multi_disease", False),
+        ("Healthy Specimen (Sample 1)", lambda: get_sample_image("Healthy", 0), "Healthy", True, True),
+        ("Healthy Specimen (Sample 2)", lambda: get_sample_image("Healthy", 15), "Healthy", True, True),
+        ("Harsh Sunlit Healthy Leaf (Glare Invariance)", create_sunlit_healthy_specimen, "Healthy", True, True),
+        ("Anthracnose Pathological Specimen", lambda: get_sample_image("Anthracnose", 0), "Anthracnose", False, True),
+        ("Bacterial Canker Pathological Specimen", lambda: get_sample_image("Bacterial Canker", 0), "Bacterial Canker", False, True),
+        ("Cutting Weevil Specimen", lambda: get_sample_image("Cutting Weevil", 0), "Cutting Weevil", False, True),
+        ("Die Back Specimen", lambda: get_sample_image("Die Back", 0), "Die Back", False, True),
+        ("Gall Midge Specimen", lambda: get_sample_image("Gall Midge", 0), "Gall Midge", False, True),
+        ("Powdery Mildew Specimen", lambda: get_sample_image("Powdery Mildew", 0), "Powdery Mildew", False, True),
+        ("Sooty Mold Specimen", lambda: get_sample_image("Sooty Mould", 0), "Sooty Mold", False, True),
+        ("Anthracnose Leaf on Book/Printed Paper Background", create_leaf_on_printed_paper_background, "Anthracnose", False, True),
+        ("Composite Multi-Disease Leaf (Anthracnose + Powdery Mildew)", create_multi_disease_composite, "multi_disease", False, True),
+        ("Pure Paper Non-Leaf Image (Negative Background Rejection)", create_pure_paper_non_leaf_image, "No Mango Leaf Detected", False, False),
     ]
 
-    for name, img_fn, expected_disease, expected_healthy in test_cases:
+    for name, img_fn, expected_disease, expected_healthy, expect_leaf in test_cases:
         print(f"\n[TEST CASE] {name}")
         img_bytes = img_fn()
         result = engine.predict(img_bytes)
@@ -102,6 +141,7 @@ def run_diagnostic_tests():
         print(f"  * Primary Disease Detected: {result['disease']} ({result['confidence']}%)")
         print(f"  * Status: {result['status']}")
         print(f"  * Risk Level: {result['risk']}")
+        print(f"  * Is Leaf Detected: {result.get('is_leaf_detected', False)}")
         print(f"  * Is Multiple Diseases: {result['is_multiple_diseases']}")
         
         det_list = [f"{d['name']} ({d.get('cnn_confidence', d['confidence'])}%)" for d in result['predicted_diseases']]
@@ -109,9 +149,6 @@ def run_diagnostic_tests():
         print(f"  * Localized Bounding Box Count: {len(result['detections'])}")
         for idx, det in enumerate(result['detections']):
             print(f"     -> Box {idx+1}: [{det['disease']}] Conf={det.get('confidence', det.get('cnn_confidence'))}% @ bbox={det['bbox']}")
-        
-        top3 = [p['name'] + ': ' + str(p['confidence']) + '%' for p in result['all_predictions'][:3]]
-        print(f"  * Top-3 Distribution: {top3}")
 
         # Non-overlap check: Verify no two bounding boxes have excessive IoU overlap
         dets = result["detections"]
@@ -121,7 +158,10 @@ def run_diagnostic_tests():
                 assert iou < 0.45, f"Boxes {i+1} and {j+1} overlap excessively (IoU: {iou:.2f}) in {name}"
 
         # Assertions
-        if expected_healthy:
+        if not expect_leaf:
+            assert result.get("is_leaf_detected") is False or result["disease"] == "No Mango Leaf Detected", f"{name} should reject non-leaf image"
+            assert len(result["detections"]) == 0, f"{name} should produce 0 bounding boxes"
+        elif expected_healthy:
             assert result["is_healthy"] is True, f"{name} should be identified as healthy"
             assert result["disease"] == "Healthy", f"{name} should have primary disease 'Healthy'"
             assert result["is_multiple_diseases"] is False, f"{name} healthy leaf must set is_multiple_diseases=False"
@@ -137,7 +177,7 @@ def run_diagnostic_tests():
             assert result["disease"].lower() == expected_disease.lower() or any(d["name"].lower() == expected_disease.lower() for d in result["predicted_diseases"]), f"Expected {expected_disease}, got {result['disease']}"
 
     print("\n" + "=" * 75)
-    print("ALL 11 HIGH-PRECISION REAL-IMAGE INFERENCE TESTS PASSED WITH 100% SUCCESS!")
+    print("ALL 13 HIGH-PRECISION REAL-IMAGE & BACKGROUND-INVARIANT TESTS PASSED!")
     print("=" * 75)
 
 if __name__ == "__main__":
